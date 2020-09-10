@@ -1509,8 +1509,8 @@ runtime_data_sb_port_binding_handler(struct engine_node *node, void *data)
 }
 
 static bool
-runtime_data_sb_datapath_binding_handler(struct engine_node *node OVS_UNUSED,
-                                         void *data OVS_UNUSED)
+runtime_data_sb_datapath_binding_handler(struct engine_node *node,
+                                         void *data)
 {
     struct sbrec_datapath_binding_table *dp_table =
         (struct sbrec_datapath_binding_table *)EN_OVSDB_GET(
@@ -1524,6 +1524,15 @@ runtime_data_sb_datapath_binding_handler(struct engine_node *node OVS_UNUSED,
                                    dp->tunnel_key)) {
                 return false;
             }
+        }
+
+        /* The tunnel_key can be updated by setting 'requested-tnl-key'
+         * in OVNNB. In this case, we must force recompute as we are
+         * will not handle this change incrementally yet.
+         */
+        if (!sbrec_datapath_binding_is_new(dp) &&
+            !sbrec_datapath_binding_is_deleted(dp)) {
+            return false;
         }
     }
 

@@ -23843,7 +23843,82 @@ OVS_APP_EXIT_AND_WAIT([ovsdb-server])
 
 as ovn-nb
 OVS_APP_EXIT_AND_WAIT([ovsdb-server])
+AT_CLEANUP
 
+AT_SETUP([ovn -- modify tunnel key])
+ovn_start
+
+sim_add hv1
+sim_add hv2
+net_add n1
+
+ovn-nbctl ls-add ls1
+
+ovn-nbctl lsp-add ls1 lsp1 \
+-- lsp-set-addresses lsp1 "f0:00:00:00:00:01 10.0.0.1"
+ovn-nbctl lsp-add ls1 lsp2 \
+-- lsp-set-addresses lsp2 "f0:00:00:00:00:02 10.0.0.2"
+
+as hv1 ovs-vsctl add-br br-phys
+as hv1 ovn_attach n1 br-phys 192.168.0.10
+as hv2 ovs-vsctl add-br br-phys
+as hv2 ovn_attach n1 br-phys 192.168.0.20
+
+
+as hv1 ovs-vsctl -- add-port br-int hv1-vif1 -- \
+       set interface hv1-vif1 external-ids:iface-id=lsp1 ofport-request=1
+
+as hv2 ovs-vsctl -- add-port br-int hv1-vif1 -- \
+       set interface hv1-vif1 external-ids:iface-id=lsp2 ofport-request=1
+
+ovn-nbctl --wait=hv sync
+
+test_tunnel_flows() {
+    local hv=$1
+    local exp_tnl_key=$2
+
+    if [[ "${hv}" = "hv1" ]]; then
+        local src=0x1
+        local dst=0x2
+    elif [[ "${hv}" = "hv2" ]]; then
+        local src=0x2
+        local dst=0x1
+    fi
+
+    # Matches for relevant tunnel flows
+    local flow1="table=32,reg15=0x8000,metadata=${exp_tnl_key}"
+    local flow2="table=32,reg15=${dst},metadata=${exp_tnl_key}"
+    local flow3="table=33,reg15=${src},metadata=${exp_tnl_key}"
+    local flow4="table=33,reg15=0x8000,metadata=${exp_tnl_key}"
+
+    # Get tunnel keys from actions for flow1 and flow2
+    local tnl_key1=`as ${hv} ovs-ofctl dump-flows br-int ${flow1} | grep -v NXST | sed -e 's/.*load:\(.*\)->NXM_NX_TUN_ID.*/\1/'`
+    local tnl_key2=`as ${hv} ovs-ofctl dump-flows br-int ${flow2} | grep -v NXST | sed -e 's/.*load:\(.*\)->NXM_NX_TUN_ID.*/\1/'`
+
+    # Compare expected and actual tunnel keys of flow1 and flow2 and output some helpful messages on failure
+    AT_CHECK([test "${tnl_key1}" = "${exp_tnl_key}"], [0], [], [], echo "flow1(${hv},${exp_tnl_key}): ${tnl_key1} != ${exp_tnl_key}")
+    AT_CHECK([test "${tnl_key2}" = "${exp_tnl_key}"], [0], [], [], echo "flow2(${hv},${exp_tnl_key}): ${tnl_key2} != ${exp_tnl_key}")
+
+    # Check flow3 and flow4 successfully match one flow
+    AT_CHECK([ test 1 = `as ${hv} ovs-ofctl dump-flows br-int ${flow3} | grep -v NXST | wc -l`])
+    AT_CHECK([ test 1 = `as ${hv} ovs-ofctl dump-flows br-int ${flow4} | grep -v NXST | wc -l`])
+
+}
+
+old_tnl_key=$(ovn-sbctl --bare --columns tunnel_key list datapath_bindin\g ls1)
+test_tunnel_flows hv1 0x1
+test_tunnel_flows hv2 0x1
+
+AT_CHECK([ovn-nbctl set logical_switch ls1 other_config:requested-tnl-key=42], [0])
+ovn-nbctl --wait=hv sync
+
+new_tnl_key=$(ovn-sbctl --bare --columns tunnel_key list datapath_binding ls1)
+AT_CHECK([test "$new_tnl_key" != "$old_tnl_key"], [0])
+
+test_tunnel_flows hv1 0x2a
+test_tunnel_flows hv2 0x2a
+
+OVN_CLEANUP([hv1], [hv2])
 AT_CLEANUP
 
 AT_SETUP([ovn -- propagate Port_Binding.up to NB and OVS])

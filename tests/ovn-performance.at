@@ -474,6 +474,12 @@ OVN_CONTROLLER_EXPECT_HIT(
     [ovn-nbctl --wait=hv lrp-set-gateway-chassis lr1-public hv5 10 && ovn-nbctl --wait=hv sync]
 )
 
+# Updating the tunnel key forces a full recompute
+OVN_CONTROLLER_EXPECT_HIT(
+    [hv1 hv2], [lflow_run],
+    [ovn-nbctl set logical_switch ls1 other_config:requested-tnl-key=42]
+)
+
 # Make hv4 master. There is remote possibility that full recompute
 # triggers for hv1-hv5 after hv4 becomes master because of updates to the
 # ovn-hv$i-0 interfaces. Most of the time there will be no recompute.
