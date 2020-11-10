@@ -97,6 +97,10 @@ static bool check_lsp_is_up;
 static char svc_monitor_mac[ETH_ADDR_STRLEN + 1];
 static struct eth_addr svc_monitor_mac_ea;
 
+/* By default, OVN will reply to ARP requests for known ports on remote chassis,
+   this will disable this behaviour */
+bool enable_proxy_arp = true;
+
 /* Default probe interval for NB and SB DB connections. */
 #define DEFAULT_PROBE_INTERVAL_MSEC 5000
 static int northd_probe_interval_nb = 0;
@@ -6933,8 +6937,14 @@ build_lswitch_arp_nd_responder_known_ips(struct ovn_port *op,
             for (size_t i = 0; i < op->n_lsp_addrs; i++) {
                 for (size_t j = 0; j < op->lsp_addrs[i].n_ipv4_addrs; j++) {
                     ds_clear(match);
-                    ds_put_format(match, "arp.tpa == %s && arp.op == 1",
-                                op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                    if (enable_proxy_arp) {
+                        ds_put_format(match, "arp.tpa == %s && arp.op == 1",
+                                  op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                    } else {
+                        ds_put_format(match, "is_chassis_resident(\"%s\") && arp.tpa == %s && arp.op == 1",
+                                  op->key, op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                    }
+
                     ds_clear(actions);
                     ds_put_format(actions,
                         "eth.dst = eth.src; "
@@ -12942,6 +12952,9 @@ ovnnb_db_run(struct northd_context *ctx,
             monitor_mac = NULL;
         }
     }
+
+    enable_proxy_arp = smap_get_bool(&nb->options, "enable-proxy-arp", true);
+    VLOG_INFO("enable-proxy-arp = %d", enable_proxy_arp);
 
     struct smap options;
     smap_clone(&options, &nb->options);
