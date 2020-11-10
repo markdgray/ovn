@@ -98,6 +98,9 @@ static bool check_lsp_is_up;
 static char svc_monitor_mac[ETH_ADDR_STRLEN + 1];
 static struct eth_addr svc_monitor_mac_ea;
 
+/* MAC address used to reply to ARP requests on non-local chassis */
+static char *proxy_arp_address = NULL;
+
 /* Default probe interval for NB and SB DB connections. */
 #define DEFAULT_PROBE_INTERVAL_MSEC 5000
 static int northd_probe_interval_nb = DEFAULT_PROBE_INTERVAL_MSEC;
@@ -6927,8 +6930,8 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
             for (size_t i = 0; i < op->n_lsp_addrs; i++) {
                 for (size_t j = 0; j < op->lsp_addrs[i].n_ipv4_addrs; j++) {
                     ds_clear(&match);
-                    ds_put_format(&match, "arp.tpa == %s && arp.op == 1",
-                                op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                    ds_put_format(&match, "is_chassis_resident(\"%s\") && arp.tpa == %s && arp.op == 1",
+                                  op->key, op->lsp_addrs[i].ipv4_addrs[j].addr_s);
                     ds_clear(&actions);
                     ds_put_format(&actions,
                         "eth.dst = eth.src; "
@@ -6966,6 +6969,31 @@ build_lswitch_flows(struct hmap *datapaths, struct hmap *ports,
                                             S_SWITCH_IN_ARP_ND_RSP, 100,
                                             ds_cstr(&match), "next;",
                                             &op->nbsp->header_);
+
+                    if (proxy_arp_address) {
+                        ds_clear(&match);
+                        ds_put_format(&match, "!is_chassis_resident(\"%s\") && arp.tpa == %s && arp.op == 1",
+                                    op->key, op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                        ds_clear(&actions);
+                        ds_put_format(&actions,
+                            "eth.dst = eth.src; "
+                            "eth.src = %s; "
+                            "arp.op = 2; /* ARP reply */ "
+                            "arp.tha = arp.sha; "
+                            "arp.sha = %s; "
+                            "arp.tpa = arp.spa; "
+                            "arp.spa = %s; "
+                            "outport = inport; "
+                            "flags.loopback = 1; "
+                            "output;",
+                            proxy_arp_address, proxy_arp_address,
+                            op->lsp_addrs[i].ipv4_addrs[j].addr_s);
+                        ovn_lflow_add_with_hint(lflows, op->od,
+                                                S_SWITCH_IN_ARP_ND_RSP, 50,
+                                                ds_cstr(&match),
+                                                ds_cstr(&actions),
+                                                &op->nbsp->header_);
+                    }
                 }
 
                 /* For ND solicitations, we need to listen for both the
@@ -12187,6 +12215,16 @@ ovnnb_db_run(struct northd_context *ctx,
             monitor_mac = NULL;
         }
     }
+
+    const char *nb_proxy_arp_address = smap_get(&nb->options, "proxy-arp-address");
+    if (nb_proxy_arp_address) {
+        VLOG_INFO("proxy-arp-address = %s", nb_proxy_arp_address);
+        if (proxy_arp_address) {
+            free(proxy_arp_address);
+        }
+            proxy_arp_address = xstrdup(nb_proxy_arp_address);
+    }
+
 
     struct smap options;
     smap_clone(&options, &nb->options);

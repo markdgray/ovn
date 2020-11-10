@@ -22581,3 +22581,55 @@ AT_CHECK([test "$encap_rec_mvtep" == "$encap_rec_mvtep1"], [0], [])
 
 OVN_CLEANUP([hv1])
 AT_CLEANUP
+
+# 2 hypervisors, one logical switch, 2 logical ports per hypervisor
+# logical ports bound to chassis encap-ip using proxy-arp-mac
+AT_SETUP([ovn -- 2 HVs, 1 LS, 2 lports/HV, proxy-arp-mac])
+AT_KEYWORDS([ovnarp])
+ovn_start
+
+ovn-nbctl set NB_Global . options:proxy-arp-address=01:02:03:04:05:06
+
+# Create hypervisors hv[12].
+# Add vif1[12] to hv1, vif2[12] to hv2
+ovn-nbctl ls-add lsw0
+net_add n1
+for i in 1 2; do
+    sim_add hv$i
+    as hv$i
+    ovs-vsctl add-br br-phys
+    ovn_attach n1 br-phys 192.168.0.$i
+
+    for j in 1 2; do
+        ovs-vsctl add-port br-int vif$i$j -- set Interface vif$i$j external-ids:iface-id=lp$i$j options:tx_pcap=hv$i/vif$i$j-tx.pcap options:rxq_pcap=hv$i/vif$i$j-rx.pcap ofport-request=$i$j
+        ovn-nbctl lsp-add lsw0 lp$i$j
+        ip_addrs="192.168.0.$i$j"
+        ovn-nbctl lsp-set-addresses lp$i$j "f0:00:00:00:00:$i$j $ip_addrs"
+        ovn-nbctl --wait=hv lsp-set-port-security lp$i$j f0:00:00:00:00:$i$j
+    done
+done
+####################### THIS IS WIP #################################
+
+# Bind the ports to the encap-ip
+for i in 1 2; do
+    for j in 1 2; do
+        as hv$i
+        ovs-vsctl set Interface vif$i$j external-ids:encap-ip=192.168.0.$i
+    done
+done
+
+sleep 5
+
+ovn-sbctl lflow-list
+
+echo "------ hv1 dump ------"
+as hv1 ovs-vsctl show
+as hv1 ovs-ofctl -O OpenFlow13 dump-flows br-int
+
+echo "------ hv2 dump ------"
+as hv2 ovs-vsctl show
+as hv2 ovs-ofctl -O OpenFlow13 dump-flows br-int
+
+OVN_CLEANUP([hv1],[hv2])
+
+AT_CLEANUP
