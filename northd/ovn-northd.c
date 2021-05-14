@@ -183,8 +183,8 @@ enum ovn_stage {
     PIPELINE_STAGE(ROUTER, IN,  LEARN_NEIGHBOR,  2, "lr_in_learn_neighbor") \
     PIPELINE_STAGE(ROUTER, IN,  IP_INPUT,        3, "lr_in_ip_input")     \
     PIPELINE_STAGE(ROUTER, IN,  DEFRAG,          4, "lr_in_defrag")       \
-    PIPELINE_STAGE(ROUTER, IN,  UNSNAT,          5, "lr_in_unsnat")       \
-    PIPELINE_STAGE(ROUTER, IN,  DNAT,            6, "lr_in_dnat")         \
+    PIPELINE_STAGE(ROUTER, IN,  DNAT,            5, "lr_in_dnat")         \
+    PIPELINE_STAGE(ROUTER, IN,  UNSNAT,          6, "lr_in_unsnat")       \
     PIPELINE_STAGE(ROUTER, IN,  ECMP_STATEFUL,   7, "lr_in_ecmp_stateful") \
     PIPELINE_STAGE(ROUTER, IN,  ND_RA_OPTIONS,   8, "lr_in_nd_ra_options") \
     PIPELINE_STAGE(ROUTER, IN,  ND_RA_RESPONSE,  9, "lr_in_nd_ra_response") \
@@ -8702,14 +8702,11 @@ add_router_lb_flow(struct hmap *lflows, struct ovn_datapath *od,
     /* A match and actions for established connections. */
     char *est_match = xasprintf("ct.est && %s", ds_cstr(match));
     if (snat_type == FORCE_SNAT || snat_type == SKIP_SNAT) {
-        char *est_actions = xasprintf("flags.%s_snat_for_lb = 1; ct_dnat;",
+        char *est_actions = xasprintf("flags.%s_snat_for_lb = 1;",
                 snat_type == SKIP_SNAT ? "skip" : "force");
         ovn_lflow_add_with_hint(lflows, od, S_ROUTER_IN_DNAT, priority,
                                 est_match, est_actions, &lb->header_);
         free(est_actions);
-    } else {
-        ovn_lflow_add_with_hint(lflows, od, S_ROUTER_IN_DNAT, priority,
-                                est_match, "ct_dnat;", &lb->header_);
     }
 
     free(new_match);
@@ -8844,7 +8841,7 @@ build_lrouter_lb_flows(struct hmap *lflows, struct ovn_datapath *od,
                                   lb_vip->vip_str);
                 }
                 ovn_lflow_add_with_hint(lflows, od, S_ROUTER_IN_DEFRAG,
-                                        100, ds_cstr(match), "ct_next;",
+                                        100, ds_cstr(match), "ct_dnat;",
                                         &nb_lb->header_);
             }
 
@@ -11834,9 +11831,12 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od,
          * the egress pipeline. But since the gateway router
          * does not have any feature that depends on the source
          * ip address being external IP address for IP routing,
-         * we can do it here, saving a future re-circulation. */
+         * we can do it here, saving a future re-circulation.
+         *
+         * As we only need to unDNAT for packets in the reply
+         * direction, we add ct.rpl to the match. */
         ovn_lflow_add(lflows, od, S_ROUTER_IN_DNAT, 50,
-                      "ip", "flags.loopback = 1; ct_dnat;");
+                      "ct.rpl && ip", "flags.loopback = 1; ct_dnat;");
     }
 
     /* Load balancing and packet defrag are only valid on
