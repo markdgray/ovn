@@ -2297,6 +2297,11 @@ execute_ct_nat(const struct ovnact_ct_nat *ct_nat,
         if (ct_nat->family == AF_INET) {
             ds_put_format(&s, "(ip4.%s="IP_FMT")", direction,
                           IP_ARGS(ct_nat->ipv4));
+            if (is_dst) {
+                ct_flow.nw_dst=ct_nat->ipv4;
+            } else {
+                ct_flow.nw_src=ct_nat->ipv4;
+            }
         } else {
             ds_put_format(&s, "(ip6.%s=", direction);
             ipv6_format_addr(&ct_nat->ipv6, &s);
