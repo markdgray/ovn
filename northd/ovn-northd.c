@@ -637,6 +637,12 @@ struct ovn_datapath {
     /* Multicast data. */
     struct mcast_info mcast_info;
 
+    /* Applies to only logical router datapath.
+     * True if logical router is a gateway router. i.e options:chassis is set.
+     * If this is true, then 'l3dgw_port' and 'l3redirect_port' will be
+     * ignored. */
+    bool is_gw_router;
+
     /* OVN northd only needs to know about the logical router gateway port for
      * NAT on a distributed router.  This "distributed gateway port" is
      * populated only when there is a gateway chassis specified for one of
@@ -1218,6 +1224,9 @@ join_datapaths(struct northd_context *ctx, struct hmap *datapaths,
         }
         init_mcast_info_for_datapath(od);
         init_nat_entries(od);
+        if (smap_get(&od->nbr->options, "chassis")) {
+            od->is_gw_router = true;
+        }
         ovs_list_push_back(lr_list, &od->lr_list);
     }
 }
@@ -11418,8 +11427,7 @@ build_lrouter_out_undnat_flow(struct hmap *lflows, struct ovn_datapath *od,
     * part of a reply. We undo the DNAT here.
     *
     * Note that this only applies for NAT on a distributed router.
-    * Undo DNAT on a gateway router is done in the ingress DNAT
-    * pipeline stage. */
+    */
     if (!od->l3dgw_port ||
         (strcmp(nat->type, "dnat") && strcmp(nat->type, "dnat_and_snat"))) {
         return;
@@ -11702,6 +11710,28 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od,
     ovn_lflow_add(lflows, od, S_ROUTER_OUT_EGR_LOOP, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_IN_ECMP_STATEFUL, 0, "1", "next;");
 
+    /* For Gateway routers, if XXX option is configured and the gateway router
+     * has load balancer or DNAT rules, we add a high priority flow to force
+     * all packets through conntrack. This will allow us to differentiate
+     * between reply flows from from a previously DNATted address and newly
+     * initiated connections from the same address.
+     *
+     * For newly initiated connections in the reply direction we will commit
+     * the flow to the DNAT zone. This ensures that these flows are tracked and
+     * established. If the flow was not committed, it would produce datapath
+     * ongoing flows with the ct.new flag set. Some NICs are unable to offload
+     * thse flows.
+     *
+     * XXX - Need to add configuration option.
+     */
+    if (od->is_gw_router &&
+        (od->nbr->n_nat || od->nbr->n_load_balancer)) {
+        ovn_lflow_add(lflows, od, S_ROUTER_IN_DEFRAG, 50, "ip", "ct_next;");
+
+        ovn_lflow_add(lflows, od, S_ROUTER_IN_DNAT, 50,
+                        "ip && ct.new", "ct_commit { } ; next; ");
+    }
+
     /* Send the IPv6 NS packets to next table. When ovn-controller
      * generates IPv6 NS (for the action - nd_ns{}), the injected
      * packet would go through conntrack - which is not required. */
@@ -11866,18 +11896,12 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od,
                     od->lb_force_snat_addrs.ipv6_addrs[0].addr_s, "lb");
             }
         }
-
-        /* For gateway router, re-circulate every packet through
-         * the DNAT zone.  This helps with the following.
-         *
-         * Any packet that needs to be unDNATed in the reverse
-         * direction gets unDNATed. Ideally this could be done in
-         * the egress pipeline. But since the gateway router
-         * does not have any feature that depends on the source
-         * ip address being external IP address for IP routing,
-         * we can do it here, saving a future re-circulation. */
-        ovn_lflow_add(lflows, od, S_ROUTER_IN_DNAT, 50,
-                      "ip", "flags.loopback = 1; ct_dnat;");
+        /* For gateway router, re-circulate every packet through the DNAT zone
+         * so that packets that need to be unDNATed in the reverse direction
+         * get unDNATed.
+         */
+        ovn_lflow_add(lflows, od, S_ROUTER_OUT_UNDNAT, 50,
+                "ip", "flags.loopback = 1; ct_dnat;");
     }
 
     /* Load balancing and packet defrag are only valid on

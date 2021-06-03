@@ -116,6 +116,7 @@ NS_CHECK_EXEC([alice1], [ping -q -c 3 -i 0.3 -w 2 30.0.0.2 | FORMAT_PING], \
 # Check conntrack entries.
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(172.16.1.2) | \
 sed -e 's/zone=[[0-9]]*/zone=<cleared>/'], [0], [dnl
+icmp,orig=(src=172.16.1.2,dst=192.168.1.2,id=<cleared>,type=8,code=0),reply=(src=192.168.1.2,dst=172.16.1.2,id=<cleared>,type=0,code=0),zone=<cleared>
 icmp,orig=(src=172.16.1.2,dst=30.0.0.2,id=<cleared>,type=8,code=0),reply=(src=192.168.1.2,dst=172.16.1.2,id=<cleared>,type=0,code=0),zone=<cleared>
 ])
 
@@ -298,6 +299,7 @@ NS_CHECK_EXEC([alice1], [ping -6 -q -c 3 -i 0.3 -w 2 fd30::2 | FORMAT_PING], \
 # Check conntrack entries.
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(fd21::2) | \
 sed -e 's/zone=[[0-9]]*/zone=<cleared>/'], [0], [dnl
+icmpv6,orig=(src=fd21::2,dst=fd11::2,id=<cleared>,type=128,code=0),reply=(src=fd11::2,dst=fd21::2,id=<cleared>,type=129,code=0),zone=<cleared>
 icmpv6,orig=(src=fd21::2,dst=fd30::2,id=<cleared>,type=128,code=0),reply=(src=fd11::2,dst=fd21::2,id=<cleared>,type=129,code=0),zone=<cleared>
 ])
 
