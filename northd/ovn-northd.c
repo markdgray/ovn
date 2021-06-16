@@ -199,10 +199,11 @@ enum ovn_stage {
     PIPELINE_STAGE(ROUTER, IN,  ARP_REQUEST,     18, "lr_in_arp_request")  \
                                                                       \
     /* Logical router egress stages. */                               \
-    PIPELINE_STAGE(ROUTER, OUT, UNDNAT,    0, "lr_out_undnat")        \
-    PIPELINE_STAGE(ROUTER, OUT, SNAT,      1, "lr_out_snat")          \
-    PIPELINE_STAGE(ROUTER, OUT, EGR_LOOP,  2, "lr_out_egr_loop")      \
-    PIPELINE_STAGE(ROUTER, OUT, DELIVERY,  3, "lr_out_delivery")
+    PIPELINE_STAGE(ROUTER, OUT, UNDNAT,      0, "lr_out_undnat")        \
+    PIPELINE_STAGE(ROUTER, OUT, POST_UNDNAT, 1, "lr_out_post_undnat")   \
+    PIPELINE_STAGE(ROUTER, OUT, SNAT,        2, "lr_out_snat")          \
+    PIPELINE_STAGE(ROUTER, OUT, EGR_LOOP,    3, "lr_out_egr_loop")      \
+    PIPELINE_STAGE(ROUTER, OUT, DELIVERY,    4, "lr_out_delivery")
 
 #define PIPELINE_STAGE(DP_TYPE, PIPELINE, STAGE, TABLE, NAME)   \
     S_##DP_TYPE##_##PIPELINE##_##STAGE                          \
@@ -11707,6 +11708,7 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od,
     ovn_lflow_add(lflows, od, S_ROUTER_OUT_SNAT, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_IN_DNAT, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_OUT_UNDNAT, 0, "1", "next;");
+    ovn_lflow_add(lflows, od, S_ROUTER_OUT_POST_UNDNAT, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_OUT_EGR_LOOP, 0, "1", "next;");
     ovn_lflow_add(lflows, od, S_ROUTER_IN_ECMP_STATEFUL, 0, "1", "next;");
 
@@ -11726,9 +11728,7 @@ build_lrouter_nat_defrag_and_lb(struct ovn_datapath *od,
      */
     if (od->is_gw_router &&
         (od->nbr->n_nat || od->nbr->n_load_balancer)) {
-        ovn_lflow_add(lflows, od, S_ROUTER_IN_DEFRAG, 50, "ip", "ct_next;");
-
-        ovn_lflow_add(lflows, od, S_ROUTER_IN_DNAT, 50,
+        ovn_lflow_add(lflows, od, S_ROUTER_OUT_POST_UNDNAT, 50,
                         "ip && ct.new", "ct_commit { } ; next; ");
     }
 
